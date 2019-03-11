@@ -4035,9 +4035,18 @@ impl<'a> LoweringContext<'a> {
             }
             // More complicated than you might expect because the else branch
             // might be `if let`.
-            ExprKind::If(ref cond, ref blk, ref else_opt) => {
-                let else_opt = else_opt.as_ref().map(|els| {
-                    match els.node {
+            ExprKind::If(ref cond, ref then, ref else_opt) => {
+                // `true => then`:
+                let then_pat = self.pat_bool(e.span, true);
+                let then_blk = self.lower_block(then, false);
+                let then_expr = self.expr_block(then_blk, ThinVec::new());
+                let then_arm = self.arm(hir_vec![then_pat], P(then_expr));
+
+                // `_ => else_block` where `else_block` is `()` if there's `None`:
+                let else_pat = self.pat_wild(e.span);
+                let else_expr = match else_opt {
+                    None => self.expr_tuple(e.span, hir_vec![]),
+                    Some(els) => match els.node {
                         ExprKind::IfLet(..) => {
                             // Wrap the `if let` expr in a block.
                             let span = els.span;
@@ -4055,12 +4064,16 @@ impl<'a> LoweringContext<'a> {
                         }
                         _ => P(self.lower_expr(els)),
                     }
-                });
+                };
+                let else_arm = self.arm(hir_vec![else_pat], else_expr);
 
-                let then_blk = self.lower_block(blk, false);
-                let then_expr = self.expr_block(then_blk, ThinVec::new());
-
-                hir::ExprKind::If(P(self.lower_expr(cond)), P(then_expr), else_opt)
+                hir::ExprKind::Match(
+                    P(self.lower_expr(cond)),
+                    vec![then_arm, else_arm].into(),
+                    hir::MatchSource::IfDesugar {
+                        contains_else_clause: else_opt.is_some()
+                    },
+                )
             }
             ExprKind::While(ref cond, ref body, opt_label) => self.with_loop_scope(e.id, |this| {
                 hir::ExprKind::While(
@@ -5117,6 +5130,12 @@ impl<'a> LoweringContext<'a> {
             span,
             targeted_by_break: false,
         }
+    }
+
+    fn pat_bool(&mut self, span: Span, val: bool) -> P<hir::Pat> {
+        let lit = Spanned { span, node: LitKind::Bool(val) };
+        let expr = self.expr(span, hir::ExprKind::Lit(lit), ThinVec::new());
+        self.pat(span, hir::PatKind::Lit(P(expr)))
     }
 
     fn pat_ok(&mut self, span: Span, pat: P<hir::Pat>) -> P<hir::Pat> {

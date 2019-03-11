@@ -1590,6 +1590,10 @@ pub enum LocalSource {
 pub enum MatchSource {
     /// A `match _ { .. }`.
     Normal,
+    /// An `if _ { .. }` (optionally with `else { .. }`).
+    IfDesugar {
+        contains_else_clause: bool,
+    },
     /// An `if let _ = _ { .. }` (optionally with `else { .. }`).
     IfLetDesugar {
         contains_else_clause: bool,
