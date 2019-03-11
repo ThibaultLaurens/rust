@@ -591,6 +591,7 @@ impl ExpnFormat {
 /// The kind of compiler desugaring.
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum CompilerDesugaringKind {
+    IfToMatch,
     QuestionMark,
     TryBlock,
     /// Desugaring of an `impl Trait` in return type position
@@ -604,6 +605,7 @@ pub enum CompilerDesugaringKind {
 impl CompilerDesugaringKind {
     pub fn name(self) -> Symbol {
         Symbol::intern(match self {
+            CompilerDesugaringKind::IfToMatch => "if",
             CompilerDesugaringKind::Async => "async",
             CompilerDesugaringKind::QuestionMark => "?",
             CompilerDesugaringKind::TryBlock => "try block",

@@ -4036,26 +4036,29 @@ impl<'a> LoweringContext<'a> {
             // More complicated than you might expect because the else branch
             // might be `if let`.
             ExprKind::If(ref cond, ref then, ref else_opt) => {
+                let if_reason = CompilerDesugaringKind::IfToMatch;
+                let if_span = self.mark_span_with_reason(if_reason, e.span, None);
+
                 // `true => then`:
-                let then_pat = self.pat_bool(e.span, true);
+                let then_pat = self.pat_bool(if_span, true);
                 let then_blk = self.lower_block(then, false);
-                let then_expr = self.expr_block(then_blk, ThinVec::new());
+                let mut then_expr = self.expr_block(then_blk, ThinVec::new());
+                then_expr.span = self.mark_span_with_reason(if_reason, then_expr.span, None);
                 let then_arm = self.arm(hir_vec![then_pat], P(then_expr));
 
                 // `_ => else_block` where `else_block` is `()` if there's `None`:
-                let else_pat = self.pat_wild(e.span);
+                let else_pat = self.pat_wild(if_span);
                 let else_expr = match else_opt {
-                    None => self.expr_tuple(e.span, hir_vec![]),
+                    None => self.expr_tuple(if_span, hir_vec![]),
                     Some(els) => match els.node {
                         ExprKind::IfLet(..) => {
                             // Wrap the `if let` expr in a block.
-                            let span = els.span;
+                            let span = self.mark_span_with_reason(if_reason, els.span, None);
                             let els = P(self.lower_expr(els));
-                            let LoweredNodeId { node_id: _, hir_id } = self.next_id();
                             let blk = P(hir::Block {
                                 stmts: hir_vec![],
                                 expr: Some(els),
-                                hir_id,
+                                hir_id: self.next_id().hir_id,
                                 rules: hir::DefaultBlock,
                                 span,
                                 targeted_by_break: false,
