@@ -1011,11 +1011,6 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_expr(subexpression);
             visitor.visit_ty(typ)
         }
-        ExprKind::If(ref head_expression, ref if_block, ref optional_else) => {
-            visitor.visit_expr(head_expression);
-            visitor.visit_expr(if_block);
-            walk_list!(visitor, visit_expr, optional_else);
-        }
         ExprKind::While(ref subexpression, ref block, ref opt_label) => {
             walk_list!(visitor, visit_label, opt_label);
             visitor.visit_expr(subexpression);

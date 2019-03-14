@@ -2,12 +2,12 @@ use crate::check::{FnCtxt, Expectation, Diverges, Needs};
 use crate::check::coercion::CoerceMany;
 use crate::util::nodemap::FxHashMap;
 use errors::Applicability;
-use rustc::hir::{self, PatKind};
+use rustc::hir::{self, PatKind, ExprKind};
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::pat_util::EnumerateAndAdjustIterator;
 use rustc::infer;
 use rustc::infer::type_variable::TypeVariableOrigin;
-use rustc::traits::ObligationCauseCode;
+use rustc::traits::{ObligationCause, ObligationCauseCode};
 use rustc::ty::{self, Ty, TypeFoldable};
 use syntax::ast;
 use syntax::source_map::Spanned;
@@ -176,6 +176,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 //
                 // that's equivalent to there existing a LUB.
                 self.demand_suptype(pat.span, expected, pat_ty);
+
                 pat_ty
             }
             PatKind::Range(ref begin, ref end, _) => {
@@ -553,74 +554,17 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
     ) -> Ty<'tcx> {
         let tcx = self.tcx;
 
-        // Not entirely obvious: if matches may create ref bindings, we want to
-        // use the *precise* type of the discriminant, *not* some supertype, as
-        // the "discriminant type" (issue #23116).
-        //
-        // arielb1 [writes here in this comment thread][c] that there
-        // is certainly *some* potential danger, e.g., for an example
-        // like:
-        //
-        // [c]: https://github.com/rust-lang/rust/pull/43399#discussion_r130223956
-        //
-        // ```
-        // let Foo(x) = f()[0];
-        // ```
-        //
-        // Then if the pattern matches by reference, we want to match
-        // `f()[0]` as a lexpr, so we can't allow it to be
-        // coerced. But if the pattern matches by value, `f()[0]` is
-        // still syntactically a lexpr, but we *do* want to allow
-        // coercions.
-        //
-        // However, *likely* we are ok with allowing coercions to
-        // happen if there are no explicit ref mut patterns - all
-        // implicit ref mut patterns must occur behind a reference, so
-        // they will have the "correct" variance and lifetime.
-        //
-        // This does mean that the following pattern would be legal:
-        //
-        // ```
-        // struct Foo(Bar);
-        // struct Bar(u32);
-        // impl Deref for Foo {
-        //     type Target = Bar;
-        //     fn deref(&self) -> &Bar { &self.0 }
-        // }
-        // impl DerefMut for Foo {
-        //     fn deref_mut(&mut self) -> &mut Bar { &mut self.0 }
-        // }
-        // fn foo(x: &mut Foo) {
-        //     {
-        //         let Bar(z): &mut Bar = x;
-        //         *z = 42;
-        //     }
-        //     assert_eq!(foo.0.0, 42);
-        // }
-        // ```
-        //
-        // FIXME(tschottdorf): don't call contains_explicit_ref_binding, which
-        // is problematic as the HIR is being scraped, but ref bindings may be
-        // implicit after #42640. We need to make sure that pat_adjustments
-        // (once introduced) is populated by the time we get here.
-        //
-        // See #44848.
-        let contains_ref_bindings = arms.iter()
-                                        .filter_map(|a| a.contains_explicit_ref_binding())
-                                        .max_by_key(|m| match *m {
-                                            hir::MutMutable => 1,
-                                            hir::MutImmutable => 0,
-                                        });
-        let discrim_ty;
-        if let Some(m) = contains_ref_bindings {
-            discrim_ty = self.check_expr_with_needs(discrim, Needs::maybe_mut_place(m));
-        } else {
-            // ...but otherwise we want to use any supertype of the
-            // discriminant. This is sort of a workaround, see note (*) in
-            // `check_pat` for some details.
-            discrim_ty = self.next_ty_var(TypeVariableOrigin::TypeInference(discrim.span));
-            self.check_expr_has_type_or_error(discrim, discrim_ty);
+        use hir::MatchSource::*;
+        let (source_if, if_no_else) = match match_src {
+            IfDesugar { contains_else_clause } => (true, !contains_else_clause),
+            IfLetDesugar { contains_else_clause } => (false, !contains_else_clause),
+            _ => (false, false),
         };
+
+        // Type check the descriminant and get its type.
+        // Note that `if`-expressions do not allow default match bindings.
+        // In other words, it is not legal to write: `if &true {} else {}`.
+        let discrim_ty = self.demand_discriminant_type(arms, discrim);
 
         // If there are no arms, that is a diverging match; a special case.
         if arms.is_empty() {
@@ -629,8 +573,9 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         }
 
         if self.diverges.get().always() {
+            let msg = if source_if { "block in `if` expression" } else { "arm" };
             for arm in arms {
-                self.warn_if_unreachable(arm.body.hir_id, arm.body.span, "arm");
+                self.warn_if_unreachable(arm.body.hir_id, arm.body.span, msg);
             }
         }
 
@@ -703,13 +648,8 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             let arm_ty = self.check_expr_with_expectation(&arm.body, expected);
             all_arms_diverge &= self.diverges.get();
 
-            // Handle the fallback arm of a desugared if-let like a missing else.
-            let is_if_let_fallback = match match_src {
-                hir::MatchSource::IfLetDesugar { contains_else_clause: false } => {
-                    i == arms.len() - 1 && arm_ty.is_unit()
-                }
-                _ => false
-            };
+            // Handle the fallback arm of a desugared if(-let) like a missing else.
+            let is_if_fallback = if_no_else && i == arms.len() - 1 && arm_ty.is_unit();
 
             let arm_span = if let hir::ExprKind::Block(ref blk, _) = arm.body.node {
                 // Point at the block expr instead of the entire block
@@ -717,29 +657,39 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             } else {
                 arm.body.span
             };
-            if is_if_let_fallback {
-                let cause = self.cause(expr.span, ObligationCauseCode::IfExpressionWithNoElse);
+
+            use ObligationCauseCode::*;
+
+            if is_if_fallback {
+                let cause = self.cause(expr.span, IfExpressionWithNoElse);
                 assert!(arm_ty.is_unit());
                 coercion.coerce_forced_unit(self, &cause, &mut |_| (), true);
             } else {
-                let cause = if i == 0 {
-                    // The reason for the first arm to fail is not that the match arms diverge,
-                    // but rather that there's a prior obligation that doesn't hold.
-                    self.cause(arm_span, ObligationCauseCode::BlockTailExpression(arm.body.hir_id))
+                let cause = if source_if {
+                    match i {
+                        0 => self.misc(expr.span),
+                        _ => self.if_cause(expr, arms, prior_arm_ty.unwrap(), arm_ty),
+                    }
                 } else {
-                    self.cause(expr.span, ObligationCauseCode::MatchExpressionArm {
-                        arm_span,
-                        source: match_src,
-                        prior_arms: other_arms.clone(),
-                        last_ty: prior_arm_ty.unwrap(),
-                        discrim_hir_id: discrim.hir_id,
-                    })
+                    let cause = match i {
+                        // The reason for the first arm to fail is not that the match arms diverge,
+                        // but rather that there's a prior obligation that doesn't hold.
+                        0 => self.cause(arm_span, BlockTailExpression(arm.body.hir_id)),
+                        _ => self.cause(expr.span, MatchExpressionArm {
+                            arm_span,
+                            source: match_src,
+                            prior_arms: other_arms.clone(),
+                            last_ty: prior_arm_ty.unwrap(),
+                            discrim_hir_id: discrim.hir_id,
+                        }),
+                    };
+                    other_arms.push(arm_span);
+                    if other_arms.len() > 5 {
+                        other_arms.remove(0);
+                    }
+                    cause
                 };
                 coercion.coerce(self, &cause, &arm.body, arm_ty);
-            }
-            other_arms.push(arm_span);
-            if other_arms.len() > 5 {
-                other_arms.remove(0);
             }
             prior_arm_ty = Some(arm_ty);
         }
@@ -748,6 +698,175 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         self.diverges.set(discrim_diverges | all_arms_diverge);
 
         coercion.complete(self)
+    }
+
+    fn if_cause(
+        &self,
+        expr: &'gcx hir::Expr,
+        arms: &'gcx [hir::Arm],
+        then_ty: Ty<'tcx>,
+        else_ty: Ty<'tcx>,
+    ) -> ObligationCause<'tcx> {
+        let mut outer_sp = if self.tcx.sess.source_map().is_multiline(expr.span) {
+            Some(expr.span)
+        } else {
+            // The entire expression is in one line, only point at the arms
+            // ```
+            // LL |     let x = if true { 10i32 } else { 10u32 };
+            //    |                       -----          ^^^^^ expected i32, found u32
+            //    |                       |
+            //    |                       expected because of this
+            // ```
+            None
+        };
+
+        // Extract `then` & `else` parts + their types:
+        let else_expr = &arms[1].body;
+        let then_expr = &arms[0].body;
+
+        let mut remove_semicolon = None;
+        let error_sp = if let ExprKind::Block(block, _) = &else_expr.node {
+            if let Some(expr) = &block.expr {
+                expr.span
+            } else if let Some(stmt) = block.stmts.last() {
+                // possibly incorrect trailing `;` in the else arm
+                remove_semicolon = self.could_remove_semicolon(block, then_ty);
+                stmt.span
+            } else {  // empty block, point at its entirety
+                // Avoid overlapping spans that aren't as readable:
+                // ```
+                // 2 |        let x = if true {
+                //   |   _____________-
+                // 3 |  |         3
+                //   |  |         - expected because of this
+                // 4 |  |     } else {
+                //   |  |____________^
+                // 5 | ||
+                // 6 | ||     };
+                //   | ||     ^
+                //   | ||_____|
+                //   | |______if and else have incompatible types
+                //   |        expected integer, found ()
+                // ```
+                // by not pointing at the entire expression:
+                // ```
+                // 2 |       let x = if true {
+                //   |               ------- if and else have incompatible types
+                // 3 |           3
+                //   |           - expected because of this
+                // 4 |       } else {
+                //   |  ____________^
+                // 5 | |
+                // 6 | |     };
+                //   | |_____^ expected integer, found ()
+                // ```
+                if outer_sp.is_some() {
+                    outer_sp = Some(self.tcx.sess.source_map().def_span(expr.span));
+                }
+                else_expr.span
+            }
+        } else { // shouldn't happen unless the parser has done something weird
+            else_expr.span
+        };
+
+        // Compute `Span` of `then` part of `if`-expression:
+        let then_sp: Span = if let ExprKind::Block(block, _) = &then_expr.node {
+            if let Some(expr) = &block.expr {
+                expr.span
+            } else if let Some(stmt) = block.stmts.last() {
+                // possibly incorrect trailing `;` in the else arm
+                remove_semicolon = remove_semicolon.or(self.could_remove_semicolon(block, else_ty));
+                stmt.span
+            } else {  // empty block, point at its entirety
+                outer_sp = None;  // same as in `error_sp`, cleanup output
+                then_expr.span
+            }
+        } else {  // shouldn't happen unless the parser has done something weird
+            then_expr.span
+        };
+
+        // Finally construct the cause:
+        self.cause(error_sp, ObligationCauseCode::IfExpression {
+            then: then_sp,
+            outer: outer_sp,
+            semicolon: remove_semicolon,
+        })
+    }
+
+    fn demand_discriminant_type(
+        &self,
+        arms: &'gcx [hir::Arm],
+        discrim: &'gcx hir::Expr,
+    ) -> Ty<'tcx> {
+        // Not entirely obvious: if matches may create ref bindings, we want to
+        // use the *precise* type of the discriminant, *not* some supertype, as
+        // the "discriminant type" (issue #23116).
+        //
+        // arielb1 [writes here in this comment thread][c] that there
+        // is certainly *some* potential danger, e.g., for an example
+        // like:
+        //
+        // [c]: https://github.com/rust-lang/rust/pull/43399#discussion_r130223956
+        //
+        // ```
+        // let Foo(x) = f()[0];
+        // ```
+        //
+        // Then if the pattern matches by reference, we want to match
+        // `f()[0]` as a lexpr, so we can't allow it to be
+        // coerced. But if the pattern matches by value, `f()[0]` is
+        // still syntactically a lexpr, but we *do* want to allow
+        // coercions.
+        //
+        // However, *likely* we are ok with allowing coercions to
+        // happen if there are no explicit ref mut patterns - all
+        // implicit ref mut patterns must occur behind a reference, so
+        // they will have the "correct" variance and lifetime.
+        //
+        // This does mean that the following pattern would be legal:
+        //
+        // ```
+        // struct Foo(Bar);
+        // struct Bar(u32);
+        // impl Deref for Foo {
+        //     type Target = Bar;
+        //     fn deref(&self) -> &Bar { &self.0 }
+        // }
+        // impl DerefMut for Foo {
+        //     fn deref_mut(&mut self) -> &mut Bar { &mut self.0 }
+        // }
+        // fn foo(x: &mut Foo) {
+        //     {
+        //         let Bar(z): &mut Bar = x;
+        //         *z = 42;
+        //     }
+        //     assert_eq!(foo.0.0, 42);
+        // }
+        // ```
+        //
+        // FIXME(tschottdorf): don't call contains_explicit_ref_binding, which
+        // is problematic as the HIR is being scraped, but ref bindings may be
+        // implicit after #42640. We need to make sure that pat_adjustments
+        // (once introduced) is populated by the time we get here.
+        //
+        // See #44848.
+        let contains_ref_bindings = arms.iter()
+                                        .filter_map(|a| a.contains_explicit_ref_binding())
+                                        .max_by_key(|m| match *m {
+                                            hir::MutMutable => 1,
+                                            hir::MutImmutable => 0,
+                                        });
+
+        if let Some(m) = contains_ref_bindings {
+            self.check_expr_with_needs(discrim, Needs::maybe_mut_place(m))
+        } else {
+            // ...but otherwise we want to use any supertype of the
+            // discriminant. This is sort of a workaround, see note (*) in
+            // `check_pat` for some details.
+            let discrim_ty = self.next_ty_var(TypeVariableOrigin::TypeInference(discrim.span));
+            self.check_expr_has_type_or_error(discrim, discrim_ty);
+            discrim_ty
+        }
     }
 
     fn check_pat_struct(

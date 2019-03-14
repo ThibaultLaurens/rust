@@ -61,6 +61,7 @@ use syntax::ext::hygiene::{Mark, SyntaxContext};
 use syntax::print::pprust;
 use syntax::ptr::P;
 use syntax::source_map::{self, respan, CompilerDesugaringKind, Spanned};
+use syntax::source_map::CompilerDesugaringKind::IfTemporary;
 use syntax::std_inject;
 use syntax::symbol::{keywords, Symbol};
 use syntax::tokenstream::{TokenStream, TokenTree};
@@ -4036,31 +4037,25 @@ impl<'a> LoweringContext<'a> {
             // More complicated than you might expect because the else branch
             // might be `if let`.
             ExprKind::If(ref cond, ref then, ref else_opt) => {
-                let if_reason = CompilerDesugaringKind::IfToMatch;
-                let if_span = self.mark_span_with_reason(if_reason, e.span, None);
-
                 // `true => then`:
-                let then_pat = self.pat_bool(if_span, true);
+                let then_pat = self.pat_bool(e.span, true);
                 let then_blk = self.lower_block(then, false);
-                let mut then_expr = self.expr_block(then_blk, ThinVec::new());
-                then_expr.span = self.mark_span_with_reason(if_reason, then_expr.span, None);
+                let then_expr = self.expr_block(then_blk, ThinVec::new());
                 let then_arm = self.arm(hir_vec![then_pat], P(then_expr));
 
                 // `_ => else_block` where `else_block` is `()` if there's `None`:
-                let else_pat = self.pat_wild(if_span);
+                let else_pat = self.pat_wild(e.span);
                 let else_expr = match else_opt {
-                    None => self.expr_tuple(if_span, hir_vec![]),
+                    None => self.expr_tuple(e.span, hir_vec![]),
                     Some(els) => match els.node {
                         ExprKind::IfLet(..) => {
                             // Wrap the `if let` expr in a block.
-                            let span = self.mark_span_with_reason(if_reason, els.span, None);
-                            let els = P(self.lower_expr(els));
                             let blk = P(hir::Block {
                                 stmts: hir_vec![],
-                                expr: Some(els),
+                                span: els.span,
+                                expr: Some(P(self.lower_expr(els))),
                                 hir_id: self.next_id().hir_id,
                                 rules: hir::DefaultBlock,
-                                span,
                                 targeted_by_break: false,
                             });
                             P(self.expr_block(blk, ThinVec::new()))
@@ -4070,8 +4065,16 @@ impl<'a> LoweringContext<'a> {
                 };
                 let else_arm = self.arm(hir_vec![else_pat], else_expr);
 
+                // Lower condition:
+                let span_block = self.mark_span_with_reason(IfTemporary, cond.span, None);
+                let cond = self.lower_expr(cond);
+                let bool_ty = Some(P(self.ty_bool(e.span)));
+                // FIXME(centril, oli-obk): This is silly but we must wrap the condition expression
+                // in a block `{ let _t = $cond; _t }` to preserve drop semantics.
+                let cond = self.expr_temp(span_block, hir::LocalSource::Normal, P(cond), bool_ty);
+
                 hir::ExprKind::Match(
-                    P(self.lower_expr(cond)),
+                    P(cond),
                     vec![then_arm, else_arm].into(),
                     hir::MatchSource::IfDesugar {
                         contains_else_clause: else_opt.is_some()
@@ -5039,6 +5042,23 @@ impl<'a> LoweringContext<'a> {
         )
     }
 
+    /// Wrap the given `expr` in `{ let _tmp[: ty]? = expr; _tmp }`.
+    /// This can be important for drop order of e.g. `if expr { .. }`.
+    fn expr_temp(
+        &mut self,
+        span: Span,
+        source: hir::LocalSource,
+        expr: P<hir::Expr>,
+        ty: Option<P<hir::Ty>>
+    ) -> hir::Expr {
+        let tident = self.str_to_ident("_tmp");
+        let (tpat, tpat_nid) = self.pat_ident(span, tident);
+        let tstmt = self.stmt_let_pat_ty(span, ty, Some(expr), tpat, source);
+        let access = self.expr_ident(span, tident, tpat_nid);
+        let block = self.block_all(span, hir_vec![tstmt], Some(P(access)));
+        self.expr_block(P(block), ThinVec::new())
+    }
+
     fn expr_match(
         &mut self,
         span: Span,
@@ -5067,6 +5087,20 @@ impl<'a> LoweringContext<'a> {
         }
     }
 
+    fn stmt_let_pat_ty(
+        &mut self,
+        span: Span,
+        ty: Option<P<hir::Ty>>,
+        init: Option<P<hir::Expr>>,
+        pat: P<hir::Pat>,
+        source: hir::LocalSource,
+    ) -> hir::Stmt {
+        let LoweredNodeId { node_id: _, hir_id } = self.next_id();
+        let local = hir::Local { pat, ty, init, hir_id, span, source, attrs: ThinVec::new() };
+        let LoweredNodeId { node_id: _, hir_id } = self.next_id();
+        hir::Stmt { span, hir_id, node: hir::StmtKind::Local(P(local)) }
+    }
+
     fn stmt_let_pat(
         &mut self,
         sp: Span,
@@ -5074,24 +5108,7 @@ impl<'a> LoweringContext<'a> {
         pat: P<hir::Pat>,
         source: hir::LocalSource,
     ) -> hir::Stmt {
-        let LoweredNodeId { node_id: _, hir_id } = self.next_id();
-
-        let local = hir::Local {
-            pat,
-            ty: None,
-            init: ex,
-            hir_id,
-            span: sp,
-            attrs: ThinVec::new(),
-            source,
-        };
-
-        let LoweredNodeId { node_id: _, hir_id } = self.next_id();
-        hir::Stmt {
-            hir_id,
-            node: hir::StmtKind::Local(P(local)),
-            span: sp
-        }
+        self.stmt_let_pat_ty(sp, None, ex, pat, source)
     }
 
     fn stmt_let(
@@ -5135,6 +5152,7 @@ impl<'a> LoweringContext<'a> {
         }
     }
 
+    /// Constructs a `true` or `false` literal pattern.
     fn pat_bool(&mut self, span: Span, val: bool) -> P<hir::Pat> {
         let lit = Spanned { span, node: LitKind::Bool(val) };
         let expr = self.expr(span, hir::ExprKind::Lit(lit), ThinVec::new());
@@ -5229,6 +5247,16 @@ impl<'a> LoweringContext<'a> {
             }
         }
         path
+    }
+
+    /// Constructs and returns the type `bool`.
+    fn ty_bool(&mut self, span: Span) -> hir::Ty {
+        let id = self.next_id();
+        self.ty_path(id, span, hir::QPath::Resolved(None, P(hir::Path {
+            span,
+            segments: hir_vec![],
+            def: Def::PrimTy(hir::PrimTy::Bool)
+        })))
     }
 
     fn ty_path(&mut self, id: LoweredNodeId, span: Span, qpath: hir::QPath) -> hir::Ty {

@@ -1366,7 +1366,6 @@ impl Expr {
             ExprKind::Unary(..) => ExprPrecedence::Unary,
             ExprKind::Lit(_) => ExprPrecedence::Lit,
             ExprKind::Type(..) | ExprKind::Cast(..) => ExprPrecedence::Cast,
-            ExprKind::If(..) => ExprPrecedence::If,
             ExprKind::While(..) => ExprPrecedence::While,
             ExprKind::Loop(..) => ExprPrecedence::Loop,
             ExprKind::Match(..) => ExprPrecedence::Match,
@@ -1416,7 +1415,6 @@ impl Expr {
             ExprKind::MethodCall(..) |
             ExprKind::Struct(..) |
             ExprKind::Tup(..) |
-            ExprKind::If(..) |
             ExprKind::Match(..) |
             ExprKind::Closure(..) |
             ExprKind::Block(..) |
@@ -1486,10 +1484,6 @@ pub enum ExprKind {
     Cast(P<Expr>, P<Ty>),
     /// A type reference (e.g., `Foo`).
     Type(P<Expr>, P<Ty>),
-    /// An `if` block, with an optional else block.
-    ///
-    /// I.e., `if <expr> { <expr> } else { <expr> }`.
-    If(P<Expr>, P<Expr>, Option<P<Expr>>),
     /// A while loop, with an optional label
     ///
     /// I.e., `'label: while expr { <block> }`.
