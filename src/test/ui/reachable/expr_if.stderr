@@ -1,7 +1,7 @@
 error: unreachable block in `if` expression
   --> $DIR/expr_if.rs:7:17
    |
-LL |       if {return} { //~ ERROR unreachable block in `if` expression
+LL |       if {return} {
    |  _________________^
 LL | |         println!("Hello, world!");
 LL | |     }
