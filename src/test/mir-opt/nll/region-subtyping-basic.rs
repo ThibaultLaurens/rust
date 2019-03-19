@@ -22,9 +22,9 @@ fn main() {
 
 // END RUST SOURCE
 // START rustc.main.nll.0.mir
-// | '_#2r    | U0 | {bb2[0..=5], bb3[0..=1]}
-// | '_#3r    | U0 | {bb2[1..=5], bb3[0..=1]}
-// | '_#4r    | U0 | {bb2[4..=5], bb3[0..=1]}
+// | '_#2r | U0 | {bb2[0..=13], bb3[0], bb6[0..=1]}
+// | '_#3r | U0 | {bb2[1..=13], bb3[0], bb6[0..=1]}
+// | '_#4r | U0 | {bb2[4..=13], bb3[0], bb6[0..=1]}
 // END rustc.main.nll.0.mir
 // START rustc.main.nll.0.mir
 // let _6: &'_#4r usize;
