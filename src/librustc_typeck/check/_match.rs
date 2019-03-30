@@ -661,9 +661,25 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             use ObligationCauseCode::*;
 
             if is_if_fallback {
+                let then_expr = &arms[0].body;
+                // If this `if` expr is the parent's function return expr,
+                // the cause of the type coercion is the return type, point at it. (#25228)
+                let ret_reason = self.maybe_get_coercion_reason(then_expr.hir_id, expr.span);
+
                 let cause = self.cause(expr.span, IfExpressionWithNoElse);
                 assert!(arm_ty.is_unit());
-                coercion.coerce_forced_unit(self, &cause, &mut |_| (), true);
+
+                coercion.coerce_forced_unit(self, &cause, &mut |err| {
+                    if let Some((span, msg)) = &ret_reason {
+                        err.span_label(*span, msg.as_str());
+                    } else if let ExprKind::Block(block, _) = &then_expr.node {
+                        if let Some(expr) = &block.expr {
+                            err.span_label(expr.span, "found here".to_string());
+                        }
+                    }
+                    err.note("`if` expressions without `else` evaluate to `()`");
+                    err.help("consider adding an `else` block that evaluates to the expected type");
+                }, ret_reason.is_none());
             } else {
                 let cause = if source_if {
                     match i {
@@ -700,6 +716,39 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         coercion.complete(self)
     }
 
+    fn maybe_get_coercion_reason(&self, hir_id: hir::HirId, span: Span) -> Option<(Span, String)> {
+        use hir::Node::{Block, Item};
+
+        let node = self.tcx.hir().get_by_hir_id(self.tcx.hir().get_parent_node_by_hir_id(
+            self.tcx.hir().get_parent_node_by_hir_id(hir_id),
+        ));
+        if let Block(block) = node {
+            // check that the body's parent is an fn
+            let parent = self.tcx.hir().get_by_hir_id(
+                self.tcx.hir().get_parent_node_by_hir_id(
+                    self.tcx.hir().get_parent_node_by_hir_id(block.hir_id),
+                ),
+            );
+            if let (Some(expr), Item(hir::Item {
+                node: hir::ItemKind::Fn(..), ..
+            })) = (&block.expr, parent) {
+                // check that the `if` expr without `else` is the fn body's expr
+                if expr.span == span {
+                    return self.get_fn_decl(hir_id).map(|(fn_decl, _)| (
+                        fn_decl.output.span(),
+                        format!("expected `{}` because of this return type", fn_decl.output),
+                    ));
+                }
+            }
+        }
+        if let hir::Node::Local(hir::Local {
+            ty: Some(_), pat, ..
+        }) = node {
+            return Some((pat.span, "expected because of this assignment".to_string()));
+        }
+        None
+    }
+
     fn if_cause(
         &self,
         expr: &'gcx hir::Expr,
@@ -708,6 +757,19 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         else_ty: Ty<'tcx>,
     ) -> ObligationCause<'tcx> {
         let mut outer_sp = if self.tcx.sess.source_map().is_multiline(expr.span) {
+            // The `if`/`else` isn't in one line in the output, include some context to make it
+            // clear it is an if/else expression:
+            // ```
+            // LL |      let x = if true {
+            //    | _____________-
+            // LL ||         10i32
+            //    ||         ----- expected because of this
+            // LL ||     } else {
+            // LL ||         10u32
+            //    ||         ^^^^^ expected i32, found u32
+            // LL ||     };
+            //    ||_____- if and else have incompatible types
+            // ```
             Some(expr.span)
         } else {
             // The entire expression is in one line, only point at the arms
@@ -770,7 +832,7 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         };
 
         // Compute `Span` of `then` part of `if`-expression:
-        let then_sp: Span = if let ExprKind::Block(block, _) = &then_expr.node {
+        let then_sp = if let ExprKind::Block(block, _) = &then_expr.node {
             if let Some(expr) = &block.expr {
                 expr.span
             } else if let Some(stmt) = block.stmts.last() {

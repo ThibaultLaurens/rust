@@ -20,6 +20,29 @@ fn foo3(bar: usize) -> usize {
     //~^^^ ERROR if may be missing an else clause
 }
 
+fn foo_let(bar: usize) -> usize {
+    if let 0 = 1 {
+        return 3;
+    }
+    //~^^^ ERROR if may be missing an else clause
+}
+
+fn foo2_let(bar: usize) -> usize {
+    let x: usize = if let 0 = 1 {
+        return 3;
+    };
+    //~^^^ ERROR if may be missing an else clause
+    x
+}
+
+fn foo3_let(bar: usize) -> usize {
+    if let 0 = 1 {
+        3
+    }
+    //~^^^ ERROR if may be missing an else clause
+}
+
 fn main() {
     let _ = foo(1);
 }
+
