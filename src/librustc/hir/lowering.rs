@@ -4046,24 +4046,18 @@ impl<'a> LoweringContext<'a> {
                 // `_ => else_block` where `else_block` is `()` if there's `None`:
                 let else_pat = self.pat_wild(e.span);
                 let else_expr = match else_opt {
-                    None => self.expr_tuple(e.span, hir_vec![]),
+                    None => self.expr_block_empty(e.span),
                     Some(els) => match els.node {
                         ExprKind::IfLet(..) => {
                             // Wrap the `if let` expr in a block.
-                            let blk = P(hir::Block {
-                                stmts: hir_vec![],
-                                span: els.span,
-                                expr: Some(P(self.lower_expr(els))),
-                                hir_id: self.next_id().hir_id,
-                                rules: hir::DefaultBlock,
-                                targeted_by_break: false,
-                            });
-                            P(self.expr_block(blk, ThinVec::new()))
+                            let els = self.lower_expr(els);
+                            let blk = self.block_all(els.span, hir_vec![], Some(P(els)));
+                            self.expr_block(P(blk), ThinVec::new())
                         }
-                        _ => P(self.lower_expr(els)),
+                        _ => self.lower_expr(els),
                     }
                 };
-                let else_arm = self.arm(hir_vec![else_pat], else_expr);
+                let else_arm = self.arm(hir_vec![else_pat], P(else_expr));
 
                 // Lower condition:
                 let span_block = self.mark_span_with_reason(IfTemporary, cond.span, None);
@@ -5128,6 +5122,11 @@ impl<'a> LoweringContext<'a> {
             self.stmt_let_pat(sp, Some(ex), pat, hir::LocalSource::Normal),
             pat_hid,
         )
+    }
+
+    fn expr_block_empty(&mut self, span: Span) -> hir::Expr {
+        let blk = self.block_all(span, hir_vec![], None);
+        self.expr_block(P(blk), ThinVec::new())
     }
 
     fn block_expr(&mut self, expr: P<hir::Expr>) -> hir::Block {
