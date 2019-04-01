@@ -556,8 +556,8 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
 
         use hir::MatchSource::*;
         let (source_if, if_no_else) = match match_src {
-            IfDesugar { contains_else_clause } => (true, !contains_else_clause),
-            IfLetDesugar { contains_else_clause } => (false, !contains_else_clause),
+            IfDesugar { contains_else_clause } |
+            IfLetDesugar { contains_else_clause } => (true, !contains_else_clause),
             _ => (false, false),
         };
 
@@ -590,12 +590,8 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             let mut all_pats_diverge = Diverges::WarnedAlways;
             for p in &arm.pats {
                 self.diverges.set(Diverges::Maybe);
-                self.check_pat_walk(
-                    &p,
-                    discrim_ty,
-                    ty::BindingMode::BindByValue(hir::Mutability::MutImmutable),
-                    Some(discrim.span),
-                );
+                let binding_mode = ty::BindingMode::BindByValue(hir::Mutability::MutImmutable);
+                self.check_pat_walk(&p, discrim_ty, binding_mode, Some(discrim.span));
                 all_pats_diverge &= self.diverges.get();
             }
 
@@ -637,7 +633,7 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         let mut other_arms = vec![];  // used only for diagnostics
         let mut prior_arm_ty = None;
         for (i, (arm, pats_diverge)) in arms.iter().zip(all_arm_pats_diverge).enumerate() {
-            if let Some(ref g) = arm.guard {
+            if let Some(g) = &arm.guard {
                 self.diverges.set(pats_diverge);
                 match g {
                     hir::Guard::If(e) => self.check_expr_has_type_or_error(e, tcx.types.bool),
@@ -648,64 +644,44 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             let arm_ty = self.check_expr_with_expectation(&arm.body, expected);
             all_arms_diverge &= self.diverges.get();
 
-            // Handle the fallback arm of a desugared if(-let) like a missing else.
-            let is_if_fallback = if_no_else && i == arms.len() - 1 && arm_ty.is_unit();
+            let span = expr.span;
 
-            let arm_span = if let hir::ExprKind::Block(ref blk, _) = arm.body.node {
-                // Point at the block expr instead of the entire block
-                blk.expr.as_ref().map(|e| e.span).unwrap_or(arm.body.span)
-            } else {
-                arm.body.span
-            };
-
-            use ObligationCauseCode::*;
-
-            if is_if_fallback {
+            if source_if {
                 let then_expr = &arms[0].body;
-                // If this `if` expr is the parent's function return expr,
-                // the cause of the type coercion is the return type, point at it. (#25228)
-                let ret_reason = self.maybe_get_coercion_reason(then_expr.hir_id, expr.span);
-
-                let cause = self.cause(expr.span, IfExpressionWithNoElse);
-                assert!(arm_ty.is_unit());
-
-                coercion.coerce_forced_unit(self, &cause, &mut |err| {
-                    if let Some((span, msg)) = &ret_reason {
-                        err.span_label(*span, msg.as_str());
-                    } else if let ExprKind::Block(block, _) = &then_expr.node {
-                        if let Some(expr) = &block.expr {
-                            err.span_label(expr.span, "found here".to_string());
-                        }
+                match (i, if_no_else) {
+                    (0, _) => coercion.coerce(self, &self.misc(span), then_expr, arm_ty),
+                    (_, true) => self.if_fallback_coercion(span, then_expr, &mut coercion),
+                    (_, _) => {
+                        let then_ty = prior_arm_ty.unwrap();
+                        let cause = self.if_cause(span, then_expr, &arm.body, then_ty, arm_ty);
+                        coercion.coerce(self, &cause, &arm.body, arm_ty);
                     }
-                    err.note("`if` expressions without `else` evaluate to `()`");
-                    err.help("consider adding an `else` block that evaluates to the expected type");
-                }, ret_reason.is_none());
+                }
             } else {
-                let cause = if source_if {
-                    match i {
-                        0 => self.misc(expr.span),
-                        _ => self.if_cause(expr, arms, prior_arm_ty.unwrap(), arm_ty),
-                    }
+                let arm_span = if let hir::ExprKind::Block(blk, _) = &arm.body.node {
+                    // Point at the block expr instead of the entire block
+                    blk.expr.as_ref().map(|e| e.span).unwrap_or(arm.body.span)
                 } else {
-                    let cause = match i {
-                        // The reason for the first arm to fail is not that the match arms diverge,
-                        // but rather that there's a prior obligation that doesn't hold.
-                        0 => self.cause(arm_span, BlockTailExpression(arm.body.hir_id)),
-                        _ => self.cause(expr.span, MatchExpressionArm {
-                            arm_span,
-                            source: match_src,
-                            prior_arms: other_arms.clone(),
-                            last_ty: prior_arm_ty.unwrap(),
-                            discrim_hir_id: discrim.hir_id,
-                        }),
-                    };
-                    other_arms.push(arm_span);
-                    if other_arms.len() > 5 {
-                        other_arms.remove(0);
-                    }
-                    cause
+                    arm.body.span
                 };
+                let (span, code) = match i {
+                    // The reason for the first arm to fail is not that the match arms diverge,
+                    // but rather that there's a prior obligation that doesn't hold.
+                    0 => (arm_span, ObligationCauseCode::BlockTailExpression(arm.body.hir_id)),
+                    _ => (span, ObligationCauseCode::MatchExpressionArm {
+                        arm_span,
+                        source: match_src,
+                        prior_arms: other_arms.clone(),
+                        last_ty: prior_arm_ty.unwrap(),
+                        discrim_hir_id: discrim.hir_id,
+                    }),
+                };
+                let cause = self.cause(span, code);
                 coercion.coerce(self, &cause, &arm.body, arm_ty);
+                other_arms.push(arm_span);
+                if other_arms.len() > 5 {
+                    other_arms.remove(0);
+                }
             }
             prior_arm_ty = Some(arm_ty);
         }
@@ -714,6 +690,30 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
         self.diverges.set(discrim_diverges | all_arms_diverge);
 
         coercion.complete(self)
+    }
+
+    /// Handle the fallback arm of a desugared if(-let) like a missing else.
+    fn if_fallback_coercion(
+        &self,
+        span: Span,
+        then_expr: &'gcx hir::Expr,
+        coercion: &mut CoerceMany<'gcx, 'tcx, '_, rustc::hir::Arm>,
+    ) {
+        // If this `if` expr is the parent's function return expr,
+        // the cause of the type coercion is the return type, point at it. (#25228)
+        let ret_reason = self.maybe_get_coercion_reason(then_expr.hir_id, span);
+        let cause = self.cause(span, ObligationCauseCode::IfExpressionWithNoElse);
+        coercion.coerce_forced_unit(self, &cause, &mut |err| {
+            if let Some((span, msg)) = &ret_reason {
+                err.span_label(*span, msg.as_str());
+            } else if let ExprKind::Block(block, _) = &then_expr.node {
+                if let Some(expr) = &block.expr {
+                    err.span_label(expr.span, "found here".to_string());
+                }
+            }
+            err.note("`if` expressions without `else` evaluate to `()`");
+            err.help("consider adding an `else` block that evaluates to the expected type");
+        }, ret_reason.is_none());
     }
 
     fn maybe_get_coercion_reason(&self, hir_id: hir::HirId, span: Span) -> Option<(Span, String)> {
@@ -751,12 +751,13 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
 
     fn if_cause(
         &self,
-        expr: &'gcx hir::Expr,
-        arms: &'gcx [hir::Arm],
+        span: Span,
+        then_expr: &'gcx hir::Expr,
+        else_expr: &'gcx hir::Expr,
         then_ty: Ty<'tcx>,
         else_ty: Ty<'tcx>,
     ) -> ObligationCause<'tcx> {
-        let mut outer_sp = if self.tcx.sess.source_map().is_multiline(expr.span) {
+        let mut outer_sp = if self.tcx.sess.source_map().is_multiline(span) {
             // The `if`/`else` isn't in one line in the output, include some context to make it
             // clear it is an if/else expression:
             // ```
@@ -770,7 +771,7 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             // LL ||     };
             //    ||_____- if and else have incompatible types
             // ```
-            Some(expr.span)
+            Some(span)
         } else {
             // The entire expression is in one line, only point at the arms
             // ```
@@ -781,10 +782,6 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
             // ```
             None
         };
-
-        // Extract `then` & `else` parts + their types:
-        let else_expr = &arms[1].body;
-        let then_expr = &arms[0].body;
 
         let mut remove_semicolon = None;
         let error_sp = if let ExprKind::Block(block, _) = &else_expr.node {
@@ -823,7 +820,7 @@ https://doc.rust-lang.org/reference/types.html#trait-objects");
                 //   | |_____^ expected integer, found ()
                 // ```
                 if outer_sp.is_some() {
-                    outer_sp = Some(self.tcx.sess.source_map().def_span(expr.span));
+                    outer_sp = Some(self.tcx.sess.source_map().def_span(span));
                 }
                 else_expr.span
             }

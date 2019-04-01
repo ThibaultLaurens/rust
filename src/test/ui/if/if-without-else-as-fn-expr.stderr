@@ -1,3 +1,14 @@
+error[E0308]: mismatched types
+  --> $DIR/if-without-else-as-fn-expr.rs:2:5
+   |
+LL | /     if bar % 5 == 0 {
+LL | |         return 3;
+LL | |     }
+   | |_____^ expected usize, found ()
+   |
+   = note: expected type `usize`
+              found type `()`
+
 error[E0317]: if may be missing an else clause
   --> $DIR/if-without-else-as-fn-expr.rs:2:5
    |
@@ -12,6 +23,18 @@ LL | |     }
               found type `()`
    = note: `if` expressions without `else` evaluate to `()`
    = help: consider adding an `else` block that evaluates to the expected type
+
+error[E0308]: mismatched types
+  --> $DIR/if-without-else-as-fn-expr.rs:9:20
+   |
+LL |       let x: usize = if bar % 5 == 0 {
+   |  ____________________^
+LL | |         return 3;
+LL | |     };
+   | |_____^ expected usize, found ()
+   |
+   = note: expected type `usize`
+              found type `()`
 
 error[E0317]: if may be missing an else clause
   --> $DIR/if-without-else-as-fn-expr.rs:9:20
@@ -28,6 +51,17 @@ LL | |     };
               found type `()`
    = note: `if` expressions without `else` evaluate to `()`
    = help: consider adding an `else` block that evaluates to the expected type
+
+error[E0308]: mismatched types
+  --> $DIR/if-without-else-as-fn-expr.rs:17:5
+   |
+LL | /     if bar % 5 == 0 {
+LL | |         3
+LL | |     }
+   | |_____^ expected usize, found ()
+   |
+   = note: expected type `usize`
+              found type `()`
 
 error[E0317]: if may be missing an else clause
   --> $DIR/if-without-else-as-fn-expr.rs:17:5
@@ -90,6 +124,7 @@ LL | |     }
    = note: `if` expressions without `else` evaluate to `()`
    = help: consider adding an `else` block that evaluates to the expected type
 
-error: aborting due to 6 previous errors
+error: aborting due to 9 previous errors
 
-For more information about this error, try `rustc --explain E0317`.
+Some errors occurred: E0308, E0317.
+For more information about an error, try `rustc --explain E0308`.
