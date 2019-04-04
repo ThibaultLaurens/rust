@@ -3,6 +3,7 @@ fn foo(bar: usize) -> usize {
         return 3;
     }
     //~^^^ ERROR if may be missing an else clause
+    //~| ERROR mismatched types [E0308]
 }
 
 fn foo2(bar: usize) -> usize {
@@ -10,6 +11,7 @@ fn foo2(bar: usize) -> usize {
         return 3;
     };
     //~^^^ ERROR if may be missing an else clause
+    //~| ERROR mismatched types [E0308]
     x
 }
 
@@ -18,6 +20,7 @@ fn foo3(bar: usize) -> usize {
         3
     }
     //~^^^ ERROR if may be missing an else clause
+    //~| ERROR mismatched types [E0308]
 }
 
 fn foo_let(bar: usize) -> usize {
@@ -45,4 +48,3 @@ fn foo3_let(bar: usize) -> usize {
 fn main() {
     let _ = foo(1);
 }
-

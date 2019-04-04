@@ -25,7 +25,7 @@ LL | |     }
    = help: consider adding an `else` block that evaluates to the expected type
 
 error[E0308]: mismatched types
-  --> $DIR/if-without-else-as-fn-expr.rs:9:20
+  --> $DIR/if-without-else-as-fn-expr.rs:10:20
    |
 LL |       let x: usize = if bar % 5 == 0 {
    |  ____________________^
@@ -37,7 +37,7 @@ LL | |     };
               found type `()`
 
 error[E0317]: if may be missing an else clause
-  --> $DIR/if-without-else-as-fn-expr.rs:9:20
+  --> $DIR/if-without-else-as-fn-expr.rs:10:20
    |
 LL |       let x: usize = if bar % 5 == 0 {
    |  _________-__________^
@@ -53,7 +53,7 @@ LL | |     };
    = help: consider adding an `else` block that evaluates to the expected type
 
 error[E0308]: mismatched types
-  --> $DIR/if-without-else-as-fn-expr.rs:17:5
+  --> $DIR/if-without-else-as-fn-expr.rs:19:5
    |
 LL | /     if bar % 5 == 0 {
 LL | |         3
@@ -64,7 +64,7 @@ LL | |     }
               found type `()`
 
 error[E0317]: if may be missing an else clause
-  --> $DIR/if-without-else-as-fn-expr.rs:17:5
+  --> $DIR/if-without-else-as-fn-expr.rs:19:5
    |
 LL |   fn foo3(bar: usize) -> usize {
    |                          ----- expected `usize` because of this return type
@@ -79,7 +79,7 @@ LL | |     }
    = help: consider adding an `else` block that evaluates to the expected type
 
 error[E0317]: if may be missing an else clause
-  --> $DIR/if-without-else-as-fn-expr.rs:24:5
+  --> $DIR/if-without-else-as-fn-expr.rs:27:5
    |
 LL |   fn foo_let(bar: usize) -> usize {
    |                             ----- expected `usize` because of this return type
@@ -94,7 +94,7 @@ LL | |     }
    = help: consider adding an `else` block that evaluates to the expected type
 
 error[E0317]: if may be missing an else clause
-  --> $DIR/if-without-else-as-fn-expr.rs:31:20
+  --> $DIR/if-without-else-as-fn-expr.rs:34:20
    |
 LL |       let x: usize = if let 0 = 1 {
    |  _________-__________^
@@ -110,7 +110,7 @@ LL | |     };
    = help: consider adding an `else` block that evaluates to the expected type
 
 error[E0317]: if may be missing an else clause
-  --> $DIR/if-without-else-as-fn-expr.rs:39:5
+  --> $DIR/if-without-else-as-fn-expr.rs:42:5
    |
 LL |   fn foo3_let(bar: usize) -> usize {
    |                              ----- expected `usize` because of this return type
