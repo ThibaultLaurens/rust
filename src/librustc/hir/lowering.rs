@@ -4062,10 +4062,10 @@ impl<'a> LoweringContext<'a> {
                 // Lower condition:
                 let span_block = self.mark_span_with_reason(IfTemporary, cond.span, None);
                 let cond = self.lower_expr(cond);
-                let bool_ty = Some(P(self.ty_bool(e.span)));
+                //let bool_ty = Some(P(self.ty_bool(e.span)));
                 // FIXME(centril, oli-obk): This is silly but we must wrap the condition expression
                 // in a block `{ let _t = $cond; _t }` to preserve drop semantics.
-                let cond = self.expr_temp(span_block, hir::LocalSource::Normal, P(cond), bool_ty);
+                let cond = self.expr_temp(span_block, P(cond));//, bool_ty);
 
                 hir::ExprKind::Match(
                     P(cond),
@@ -4667,6 +4667,8 @@ impl<'a> LoweringContext<'a> {
 
                 // `{ let _result = ...; _result }`
                 // Underscore prevents an `unused_variables` lint if the head diverges.
+                // https://github.com/rust-lang/rust/commit/b445bf2bd1139236fd815bf93610ddaf17726111
+                // FIXME(centril): Consider optimizing with `ExprKind::Use`.
                 let result_ident = self.str_to_ident("_result");
                 let (let_stmt, let_stmt_binding) =
                     self.stmt_let(e.span, false, result_ident, match_expr);
@@ -5041,16 +5043,19 @@ impl<'a> LoweringContext<'a> {
     fn expr_temp(
         &mut self,
         span: Span,
-        source: hir::LocalSource,
+        //source: hir::LocalSource,
         expr: P<hir::Expr>,
-        ty: Option<P<hir::Ty>>
+        //ty: Option<P<hir::Ty>>
     ) -> hir::Expr {
+        /*
         let tident = self.str_to_ident("_tmp");
         let (tpat, tpat_nid) = self.pat_ident(span, tident);
         let tstmt = self.stmt_let_pat_ty(span, ty, Some(expr), tpat, source);
         let access = self.expr_ident(span, tident, tpat_nid);
         let block = self.block_all(span, hir_vec![tstmt], Some(P(access)));
         self.expr_block(P(block), ThinVec::new())
+        */
+        self.expr(span, hir::ExprKind::Use(expr), ThinVec::new())
     }
 
     fn expr_match(
@@ -5248,6 +5253,7 @@ impl<'a> LoweringContext<'a> {
         path
     }
 
+    /*
     /// Constructs and returns the type `bool`.
     fn ty_bool(&mut self, span: Span) -> hir::Ty {
         let id = self.next_id();
@@ -5257,6 +5263,7 @@ impl<'a> LoweringContext<'a> {
             def: Def::PrimTy(hir::PrimTy::Bool)
         })))
     }
+    */
 
     fn ty_path(&mut self, id: LoweredNodeId, span: Span, qpath: hir::QPath) -> hir::Ty {
         let mut id = id;

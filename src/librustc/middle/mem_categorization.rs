@@ -682,7 +682,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
             hir::ExprKind::Assign(..) | hir::ExprKind::AssignOp(..) |
             hir::ExprKind::Closure(..) | hir::ExprKind::Ret(..) |
             hir::ExprKind::Unary(..) | hir::ExprKind::Yield(..) |
-            hir::ExprKind::MethodCall(..) | hir::ExprKind::Cast(..) |
+            hir::ExprKind::MethodCall(..) | hir::ExprKind::Cast(..) | hir::ExprKind::Use(..) |
             hir::ExprKind::Array(..) | hir::ExprKind::Tup(..) |
             hir::ExprKind::Binary(..) | hir::ExprKind::While(..) |
             hir::ExprKind::Block(..) | hir::ExprKind::Loop(..) | hir::ExprKind::Match(..) |

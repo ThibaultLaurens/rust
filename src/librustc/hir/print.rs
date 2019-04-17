@@ -1320,6 +1320,9 @@ impl<'a> State<'a> {
                 self.word_space(":")?;
                 self.print_type(&ty)?;
             }
+            hir::ExprKind::Use(ref expr) => {
+                self.print_expr(expr)?;
+            }
             hir::ExprKind::While(ref test, ref blk, opt_label) => {
                 if let Some(label) = opt_label {
                     self.print_ident(label.ident)?;

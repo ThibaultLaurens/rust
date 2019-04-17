@@ -1366,6 +1366,7 @@ impl Expr {
             ExprKind::Unary(..) => ExprPrecedence::Unary,
             ExprKind::Lit(_) => ExprPrecedence::Lit,
             ExprKind::Type(..) | ExprKind::Cast(..) => ExprPrecedence::Cast,
+            ExprKind::Use(ref expr, ..) => expr.precedence(),
             ExprKind::While(..) => ExprPrecedence::While,
             ExprKind::Loop(..) => ExprPrecedence::Loop,
             ExprKind::Match(..) => ExprPrecedence::Match,
@@ -1435,6 +1436,7 @@ impl Expr {
             ExprKind::Binary(..) |
             ExprKind::Yield(..) |
             ExprKind::Cast(..) |
+            ExprKind::Use(..) |
             ExprKind::Err => {
                 false
             }
@@ -1484,6 +1486,10 @@ pub enum ExprKind {
     Cast(P<Expr>, P<Ty>),
     /// A type reference (e.g., `Foo`).
     Type(P<Expr>, P<Ty>),
+    /// Equivalent to `{ let _t = expr; _t }`.
+    /// Maps directly to `hair::ExprKind::Use`.
+    /// Only exists to tweak the drop order in HIR.
+    Use(P<Expr>),
     /// A while loop, with an optional label
     ///
     /// I.e., `'label: while expr { <block> }`.

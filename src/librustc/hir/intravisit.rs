@@ -1011,6 +1011,9 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
             visitor.visit_expr(subexpression);
             visitor.visit_ty(typ)
         }
+        ExprKind::Use(ref subexpression) => {
+            visitor.visit_expr(subexpression);
+        }
         ExprKind::While(ref subexpression, ref block, ref opt_label) => {
             walk_list!(visitor, visit_label, opt_label);
             visitor.visit_expr(subexpression);
