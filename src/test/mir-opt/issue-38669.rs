@@ -26,16 +26,23 @@ fn main() {
 //     }
 //     bb3: {
 //         StorageLive(_4);
-//         _4 = _1;
-//         switchInt(move _4) -> [false: bb5, otherwise: bb4];
+//         StorageLive(_5);
+//         _5 = _1;
+//         FakeRead(ForLet, _5);
+//         AscribeUserType(_5, o, UserTypeProjection { base: UserType(1), projs: [] });
+//         _4 = _5;
+//         StorageDead(_5);
+//         FakeRead(ForMatchedPlace, _4);
+//         switchInt(_4) -> [false: bb5, otherwise: bb4];
 //     }
-//     bb4: {
+//     ...
+//     bb7: {
 //         _0 = ();
 //         StorageDead(_4);
 //         StorageDead(_1);
 //         return;
 //     }
-//     bb5: {
+//     bb8: {
 //         _3 = ();
 //         StorageDead(_4);
 //         _1 = const true;

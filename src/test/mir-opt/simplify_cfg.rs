@@ -43,12 +43,14 @@ fn bar() -> bool {
 //     }
 //     bb1: {
 //         StorageLive(_2);
-//         _2 = const bar() -> bb3;
+//         StorageLive(_3);
+//         _3 = const bar() -> bb3;
 //     }
 // END rustc.main.SimplifyCfg-early-opt.before.mir
 // START rustc.main.SimplifyCfg-early-opt.after.mir
 //     bb0: {
 //         StorageLive(_2);
-//         _2 = const bar() -> bb1;
+//         StorageLive(_3);
+//         _3 = const bar() -> bb1;
 //     }
 // END rustc.main.SimplifyCfg-early-opt.after.mir

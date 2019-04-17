@@ -196,11 +196,6 @@ pub enum ExprKind<'tcx> {
     Unsize {
         source: ExprRef<'tcx>,
     },
-    If {
-        condition: ExprRef<'tcx>,
-        then: ExprRef<'tcx>,
-        otherwise: Option<ExprRef<'tcx>>,
-    },
     Loop {
         condition: Option<ExprRef<'tcx>>,
         body: ExprRef<'tcx>,

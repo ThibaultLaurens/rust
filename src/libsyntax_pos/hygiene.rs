@@ -591,6 +591,11 @@ impl ExpnFormat {
 /// The kind of compiler desugaring.
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum CompilerDesugaringKind {
+    /// We desugar `if c { i } else { e }` to `match { let _t = c; _t } { true => i, _ => e }`.
+    /// However, we do not want to blame the access `_t` for unreachability or the block
+    /// but rather treat the whole induced block as an atomic unit.
+    /// This desugaring kind allows us to check whether `_t` arose from the above desugaring.
+    IfTemporary,
     QuestionMark,
     TryBlock,
     /// Desugaring of an `impl Trait` in return type position
@@ -604,6 +609,7 @@ pub enum CompilerDesugaringKind {
 impl CompilerDesugaringKind {
     pub fn name(self) -> Symbol {
         Symbol::intern(match self {
+            CompilerDesugaringKind::IfTemporary => "if",
             CompilerDesugaringKind::Async => "async",
             CompilerDesugaringKind::QuestionMark => "?",
             CompilerDesugaringKind::TryBlock => "try block",
